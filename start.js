@@ -25,7 +25,7 @@ function loadData() {
     } catch (error) {
         console.error('❌ خطا:', error);
     }
-    return { groups: {}, messages: [], bridge: null };
+    return { groups: {}, messages: [], bridge: null, messenger: null };
 }
 
 function saveData(data) {
@@ -40,6 +40,7 @@ let data = loadData();
 if (!data.groups) data.groups = {};
 if (!data.messages) data.messages = [];
 if (!data.bridge) data.bridge = null;
+if (!data.messenger) data.messenger = null;
 
 // ===================== وضعیت‌ها =====================
 const userStates = {};
@@ -49,6 +50,40 @@ function generateId() {
     messageCounter++;
     return `msg_${Date.now()}_${messageCounter}`;
 }
+
+// ===================== دکمه‌های شیشه‌ای خفن =====================
+const glassStyle = {
+    reply_markup: {
+        inline_keyboard: [],
+        resize_keyboard: true,
+        one_time_keyboard: false
+    }
+};
+
+function createGlassKeyboard(buttons) {
+    const keyboard = [];
+    for (let i = 0; i < buttons.length; i += 2) {
+        const row = [];
+        for (let j = i; j < Math.min(i + 2, buttons.length); j++) {
+            row.push({
+                text: buttons[j].text,
+                callback_data: buttons[j].callback_data
+            });
+        }
+        keyboard.push(row);
+    }
+    return Markup.inlineKeyboard(keyboard);
+}
+
+// ===================== دکمه‌های اصلی =====================
+const mainButtons = [
+    { text: '🔗 اتصال گروه‌ها', callback_data: 'bridge_start' },
+    { text: '📊 وضعیت', callback_data: 'status' },
+    { text: '👤 پیام‌رسان', callback_data: 'messenger_menu' },
+    { text: '📜 تاریخچه', callback_data: 'logs' },
+    { text: '🔌 قطع اتصال', callback_data: 'disconnect' },
+    { text: '❌ حذف پیام‌رسان', callback_data: 'remove_messenger' }
+];
 
 // ===================== خوش‌آمدگویی =====================
 bot.start(async (ctx) => {
@@ -66,7 +101,6 @@ bot.start(async (ctx) => {
         console.log(`✅ گروه ثبت شد: ${chatTitle}`);
     }
 
-    // اگر قبلاً گروهی به عنوان پل ثبت شده
     const bridge = data.bridge;
     let status = '❌ بدون اتصال';
     let connectedGroup = '';
@@ -81,29 +115,294 @@ bot.start(async (ctx) => {
         }
     }
 
+    const messenger = data.messenger;
+    let messengerText = '❌ تعیین نشده';
+    if (messenger) {
+        messengerText = `✅ ${messenger.name} (در گروه ${messenger.groupTitle})`;
+    }
+
     await ctx.reply(
-        `🤖 **ربات میانجیگر**\n\n` +
+        `✨ **ربات میانجیگر پیشرفته** ✨\n\n` +
         `📌 **گروه:** ${chatTitle}\n` +
-        `🔗 **وضعیت:** ${status}${connectedGroup ? ` (به ${connectedGroup})` : ''}\n\n` +
-        `📝 برای اتصال دو گروه، توی یکی از گروه‌ها بنویسید:\n` +
-        `\`اتصال به [اسم گروه]\`\n\n` +
-        `مثال: \`اتصال به گروه تست\``,
+        `🔗 **وضعیت:** ${status}${connectedGroup ? ` (به ${connectedGroup})` : ''}\n` +
+        `👤 **پیام‌رسان:** ${messengerText}\n\n` +
+        `📝 **راهنما:**\n` +
+        `• برای اتصال: \`اتصال به [اسم گروه]\`\n` +
+        `• برای تعیین پیام‌رسان: ریپلای به فرد + \`پیام رسان\`\n` +
+        `• برای قطع اتصال: \`قطع اتصال\``,
+        {
+            parse_mode: 'Markdown',
+            ...createGlassKeyboard(mainButtons)
+        }
+    );
+});
+
+// ===================== دکمه‌های شیشه‌ای =====================
+bot.action('bridge_start', async (ctx) => {
+    const groups = Object.values(data.groups);
+    if (groups.length < 2) {
+        return ctx.reply('❌ حداقل به ۲ گروه نیاز است!');
+    }
+
+    let message = '🔗 **اتصال دو گروه**\n\n';
+    message += '📌 **گروه اول** را انتخاب کنید:\n\n';
+    groups.forEach((g, index) => {
+        message += `${index + 1}. ${g.chatTitle}\n`;
+    });
+    message += '\nشماره گروه را وارد کنید:';
+
+    userStates[ctx.from.id] = { step: 'bridge_step1' };
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
+bot.action('status', async (ctx) => {
+    const bridge = data.bridge;
+    let message = '📊 **وضعیت سیستم**\n\n';
+
+    if (!bridge) {
+        message += '❌ هیچ اتصالی برقرار نیست!\n';
+    } else {
+        const group1 = data.groups[bridge.group1];
+        const group2 = data.groups[bridge.group2];
+        message += `✅ **اتصال فعال:**\n`;
+        message += `🔹 ${group1?.chatTitle || 'نامشخص'}\n`;
+        message += `🔹 ${group2?.chatTitle || 'نامشخص'}\n\n`;
+        
+        const lastMessages = data.messages.slice(-5).reverse();
+        if (lastMessages.length > 0) {
+            message += `📜 **۵ پیام آخر:**\n`;
+            lastMessages.forEach(msg => {
+                message += `• ${msg.fromGroup} → ${msg.toGroup}: ${msg.text.substring(0, 30)}${msg.text.length > 30 ? '...' : ''}\n`;
+            });
+        }
+    }
+
+    const messenger = data.messenger;
+    if (messenger) {
+        message += `\n👤 **پیام‌رسان:** ${messenger.name}`;
+    }
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
+bot.action('messenger_menu', async (ctx) => {
+    const groups = Object.values(data.groups);
+    if (groups.length === 0) {
+        return ctx.reply('❌ هیچ گروهی ثبت نشده!');
+    }
+
+    let message = '👤 **مدیریت پیام‌رسان**\n\n';
+    message += '📌 گروه مورد نظر را انتخاب کنید:\n\n';
+    groups.forEach((g, index) => {
+        message += `${index + 1}. ${g.chatTitle}\n`;
+    });
+    message += '\nشماره گروه را وارد کنید:';
+
+    userStates[ctx.from.id] = { step: 'messenger_step' };
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
+bot.action('logs', async (ctx) => {
+    const logs = data.messages.slice(-20).reverse();
+    if (logs.length === 0) {
+        return ctx.reply('📭 هیچ پیامی ثبت نشده!');
+    }
+
+    let message = '📜 **تاریخچه پیام‌ها**\n\n';
+    logs.forEach((msg, index) => {
+        message += `${index + 1}. 📩 **${msg.fromUser}**\n`;
+        message += `   📌 ${msg.fromGroup} → ${msg.toGroup}\n`;
+        message += `   📝 ${msg.text.substring(0, 40)}${msg.text.length > 40 ? '...' : ''}\n`;
+        message += `   👁️ ${msg.seen ? '✅ دیده شد' : '❌ دیده نشده'}\n`;
+        message += `   ✍️ ${msg.replied ? '✅ پاسخ داده شد' : '❌ بدون پاسخ'}\n\n`;
+    });
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
+bot.action('disconnect', async (ctx) => {
+    if (!data.bridge) {
+        return ctx.reply('❌ هیچ اتصالی وجود ندارد!');
+    }
+
+    const bridge = data.bridge;
+    const group1 = data.groups[bridge.group1];
+    const group2 = data.groups[bridge.group2];
+
+    data.bridge = null;
+    saveData(data);
+
+    await ctx.reply(
+        `🔌 **اتصال قطع شد!**\n\n` +
+        `🔹 ${group1?.chatTitle || 'نامشخص'} ↔️ 🔹 ${group2?.chatTitle || 'نامشخص'}`,
         { parse_mode: 'Markdown' }
     );
 });
 
-// ===================== دریافت پیام‌ها =====================
+bot.action('remove_messenger', async (ctx) => {
+    if (!data.messenger) {
+        return ctx.reply('❌ هیچ پیام‌رسانی تعیین نشده!');
+    }
+
+    const messengerName = data.messenger.name;
+    data.messenger = null;
+    saveData(data);
+
+    await ctx.reply(`✅ پیام‌رسان (${messengerName}) حذف شد!`);
+});
+
+// ===================== دریافت متن‌ها =====================
 bot.on('text', async (ctx) => {
     const chatId = String(ctx.chat.id);
     const userId = ctx.from.id;
     const text = ctx.message.text;
     const messageId = ctx.message.message_id;
+    const replyTo = ctx.message.reply_to_message;
 
-    // ========== مدیریت اتصال ==========
+    // ========== مدیریت مرحله‌ای ==========
+    if (userStates[userId]) {
+        // مرحله 1: اتصال گروه اول
+        if (userStates[userId].step === 'bridge_step1') {
+            const groups = Object.values(data.groups);
+            const index = parseInt(text) - 1;
+            if (isNaN(index) || index < 0 || index >= groups.length) {
+                return ctx.reply(`❌ عددی بین 1 تا ${groups.length} وارد کنید!`);
+            }
+            userStates[userId].firstGroup = groups[index].chatId;
+            userStates[userId].step = 'bridge_step2';
+
+            let message = '📌 **گروه دوم** را انتخاب کنید:\n\n';
+            groups.forEach((g, i) => {
+                if (g.chatId !== userStates[userId].firstGroup) {
+                    message += `${i + 1}. ${g.chatTitle}\n`;
+                }
+            });
+            message += '\nشماره گروه را وارد کنید:';
+            return ctx.reply(message, { parse_mode: 'Markdown' });
+        }
+
+        // مرحله 2: اتصال گروه دوم
+        if (userStates[userId].step === 'bridge_step2') {
+            const groups = Object.values(data.groups);
+            const index = parseInt(text) - 1;
+            if (isNaN(index) || index < 0 || index >= groups.length) {
+                return ctx.reply(`❌ عددی بین 1 تا ${groups.length} وارد کنید!`);
+            }
+            const secondGroup = groups[index];
+            if (secondGroup.chatId === userStates[userId].firstGroup) {
+                return ctx.reply('❌ نمی‌توانید یک گروه را دو بار انتخاب کنید!');
+            }
+
+            data.bridge = {
+                group1: userStates[userId].firstGroup,
+                group2: secondGroup.chatId
+            };
+            saveData(data);
+
+            const group1 = data.groups[userStates[userId].firstGroup];
+            await ctx.reply(
+                `✅ **اتصال برقرار شد!**\n\n` +
+                `🔹 ${group1.chatTitle} ↔️ 🔹 ${secondGroup.chatTitle}\n\n` +
+                `📝 حالا پیام‌ها بین دو گروه رد و بدل میشوند.`,
+                { parse_mode: 'Markdown' }
+            );
+            delete userStates[userId];
+            return;
+        }
+
+        // مرحله: انتخاب گروه برای پیام‌رسان
+        if (userStates[userId].step === 'messenger_step') {
+            const groups = Object.values(data.groups);
+            const index = parseInt(text) - 1;
+            if (isNaN(index) || index < 0 || index >= groups.length) {
+                return ctx.reply(`❌ عددی بین 1 تا ${groups.length} وارد کنید!`);
+            }
+            userStates[userId].messengerGroup = groups[index].chatId;
+            userStates[userId].step = 'messenger_user';
+
+            await ctx.reply(
+                `✅ گروه "${groups[index].chatTitle}" انتخاب شد!\n\n` +
+                `👤 حالا در گروه به فرد مورد نظر **ریپلای** کنید و بنویسید:\n` +
+                `\`پیام رسان\``,
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+
+        // مرحله: پاسخ به پیام
+        if (userStates[userId].step === 'waiting_reply') {
+            const state = userStates[userId];
+            try {
+                await bot.telegram.sendMessage(
+                    state.targetUserId,
+                    `✍️ **پاسخ از ${ctx.from.first_name}:**\n\n📝 ${text}`,
+                    { parse_mode: 'Markdown' }
+                );
+                const msg = data.messages.find(m => m.id === state.msgId);
+                if (msg) msg.replied = true;
+                saveData(data);
+                await ctx.reply('✅ پاسخ شما ارسال شد!');
+                delete userStates[userId];
+            } catch (error) {
+                console.error('❌ خطا:', error);
+                ctx.reply('❌ خطا در ارسال پاسخ!');
+            }
+            return;
+        }
+    }
+
+    // ========== تشخیص "پیام رسان" در ریپلای ==========
+    if (replyTo && text.trim() === 'پیام رسان') {
+        const targetUserId = replyTo.from.id;
+        const targetName = replyTo.from.first_name || 'کاربر';
+        const group = data.groups[chatId];
+
+        if (!group) {
+            return ctx.reply('❌ این گروه ثبت نشده!');
+        }
+
+        data.messenger = {
+            userId: targetUserId,
+            name: targetName,
+            username: replyTo.from.username || 'بدون یوزرنیم',
+            groupId: chatId,
+            groupTitle: group.chatTitle,
+            setAt: new Date().toISOString()
+        };
+        saveData(data);
+
+        await ctx.reply(
+            `✅ **${targetName}** به عنوان پیام‌رسان تعیین شد!\n\n` +
+            `🔒 فقط ایشان میتوانند در گروه "${group.chatTitle}" پیام بفرستند.\n` +
+            `🔓 برای لغو: ریپلای به ایشان + \`لغو پیام رسان\``,
+            { parse_mode: 'Markdown' }
+        );
+
+        try {
+            await bot.telegram.sendMessage(
+                targetUserId,
+                `✅ شما به عنوان **پیام‌رسان** در گروه "${group.chatTitle}" تعیین شدید!\n🔒 فقط شما میتوانید پیام بفرستید.`,
+                { parse_mode: 'Markdown' }
+            );
+        } catch (e) {}
+        return;
+    }
+
+    // ========== تشخیص "لغو پیام رسان" در ریپلای ==========
+    if (replyTo && text.trim() === 'لغو پیام رسان') {
+        if (!data.messenger) {
+            return ctx.reply('❌ هیچ پیام‌رسانی تعیین نشده!');
+        }
+        const messengerName = data.messenger.name;
+        data.messenger = null;
+        saveData(data);
+        await ctx.reply(`✅ پیام‌رسان (${messengerName}) لغو شد!`);
+        return;
+    }
+
+    // ========== اتصال با متن ==========
     if (text.startsWith('اتصال به ')) {
         const targetTitle = text.replace('اتصال به ', '').trim();
-        
-        // پیدا کردن گروه هدف
         let targetGroup = null;
         for (const key in data.groups) {
             if (data.groups[key].chatTitle === targetTitle && key !== chatId) {
@@ -116,7 +415,6 @@ bot.on('text', async (ctx) => {
             return ctx.reply(`❌ گروهی با نام "${targetTitle}" پیدا نشد!`);
         }
 
-        // برقراری اتصال
         data.bridge = {
             group1: chatId,
             group2: targetGroup.chatId
@@ -126,106 +424,72 @@ bot.on('text', async (ctx) => {
         await ctx.reply(
             `✅ **اتصال برقرار شد!**\n\n` +
             `🔹 ${data.groups[chatId].chatTitle} ↔️ 🔹 ${targetGroup.chatTitle}\n\n` +
-            `📝 حالا هر پیامی در این گروه به گروه دیگر ارسال میشود.`,
+            `📝 حالا هر پیامی رد و بدل میشود.`,
             { parse_mode: 'Markdown' }
         );
-
-        // اطلاع به گروه دیگر
-        try {
-            await bot.telegram.sendMessage(
-                targetGroup.chatId,
-                `✅ **اتصال برقرار شد!**\n\n` +
-                `🔹 ${data.groups[chatId].chatTitle} ↔️ 🔹 ${targetGroup.chatTitle}\n\n` +
-                `📝 حالا هر پیامی در این گروه به گروه دیگر ارسال میشود.`,
-                { parse_mode: 'Markdown' }
-            );
-        } catch (e) {
-            console.log('❌ نتونست به گروه دیگه پیام بده');
-        }
-
         return;
     }
 
-    // ========== مدیریت قطع اتصال ==========
+    // ========== قطع اتصال ==========
     if (text === 'قطع اتصال') {
-        if (!data.bridge) {
-            return ctx.reply('❌ هیچ اتصالی وجود ندارد!');
-        }
-
+        if (!data.bridge) return ctx.reply('❌ هیچ اتصالی وجود ندارد!');
         const bridge = data.bridge;
         const group1 = data.groups[bridge.group1];
         const group2 = data.groups[bridge.group2];
-
         data.bridge = null;
         saveData(data);
-
-        await ctx.reply(
-            `🔌 **اتصال قطع شد!**\n\n` +
-            `🔹 ${group1?.chatTitle || 'نامشخص'} ↔️ 🔹 ${group2?.chatTitle || 'نامشخص'}`,
-            { parse_mode: 'Markdown' }
-        );
-
-        // اطلاع به گروه دیگر
-        try {
-            if (bridge.group1 === chatId) {
-                await bot.telegram.sendMessage(bridge.group2, '🔌 اتصال قطع شد!');
-            } else {
-                await bot.telegram.sendMessage(bridge.group1, '🔌 اتصال قطع شد!');
-            }
-        } catch (e) {}
-
+        await ctx.reply(`🔌 اتصال ${group1?.chatTitle} ↔️ ${group2?.chatTitle} قطع شد!`);
         return;
     }
 
-    // ========== مدیریت وضعیت ==========
+    // ========== وضعیت ==========
     if (text === 'وضعیت') {
         const bridge = data.bridge;
         let message = '📊 **وضعیت سیستم**\n\n';
-
         if (!bridge) {
-            message += '❌ هیچ اتصالی برقرار نیست!\n';
-            message += '📝 برای اتصال بنویسید: `اتصال به [اسم گروه]`';
+            message += '❌ هیچ اتصالی برقرار نیست!';
         } else {
             const group1 = data.groups[bridge.group1];
             const group2 = data.groups[bridge.group2];
-            message += `✅ **اتصال فعال:**\n`;
-            message += `🔹 ${group1?.chatTitle || 'نامشخص'}\n`;
-            message += `🔹 ${group2?.chatTitle || 'نامشخص'}\n\n`;
-            
-            // چند پیام آخر
-            const lastMessages = data.messages.slice(-5).reverse();
+            message += `✅ **اتصال فعال:**\n🔹 ${group1?.chatTitle}\n🔹 ${group2?.chatTitle}\n\n`;
+            const lastMessages = data.messages.slice(-3).reverse();
             if (lastMessages.length > 0) {
-                message += `📜 **۵ پیام آخر:**\n`;
+                message += `📜 **۳ پیام آخر:**\n`;
                 lastMessages.forEach(msg => {
-                    message += `• ${msg.fromGroup} → ${msg.toGroup}: ${msg.text.substring(0, 20)}${msg.text.length > 20 ? '...' : ''}\n`;
+                    message += `• ${msg.fromGroup} → ${msg.toGroup}: ${msg.text.substring(0, 20)}...\n`;
                 });
             }
         }
-
+        if (data.messenger) {
+            message += `\n👤 **پیام‌رسان:** ${data.messenger.name}`;
+        }
         await ctx.reply(message, { parse_mode: 'Markdown' });
         return;
     }
 
     // ========== ارسال پیام به گروه دیگر ==========
     const bridge = data.bridge;
-    if (!bridge) return; // اتصالی وجود ندارد
+    if (!bridge) return;
 
-    // مشخص کردن گروه مقصد
     let targetChatId = null;
-    if (bridge.group1 === chatId) {
-        targetChatId = bridge.group2;
-    } else if (bridge.group2 === chatId) {
-        targetChatId = bridge.group1;
-    } else {
-        return; // این گروه در اتصال نیست
-    }
+    if (bridge.group1 === chatId) targetChatId = bridge.group2;
+    else if (bridge.group2 === chatId) targetChatId = bridge.group1;
+    else return;
 
     const fromGroup = data.groups[chatId];
     const toGroup = data.groups[targetChatId];
 
-    if (!toGroup) return;
+    // ========== بررسی مجوز ارسال ==========
+    const messenger = data.messenger;
+    if (messenger && String(messenger.userId) !== String(userId)) {
+        return ctx.reply(
+            `❌ **شما مجاز به ارسال پیام نیستید!**\n\n` +
+            `🔒 فقط **${messenger.name}** میتواند پیام بفرستد.`,
+            { parse_mode: 'Markdown' }
+        );
+    }
 
-    // ذخیره پیام
+    // ========== ذخیره و ارسال ==========
     const msgId = generateId();
     const messageRecord = {
         id: msgId,
@@ -241,21 +505,24 @@ bot.on('text', async (ctx) => {
     data.messages.push(messageRecord);
     saveData(data);
 
-    // ارسال به گروه مقصد
     try {
+        // دکمه‌های شیشه‌ای خفن برای پیام
+        const messageButtons = [
+            { text: '👁️ دیدم', callback_data: `seen_${msgId}` },
+            { text: '✍️ پاسخ', callback_data: `reply_${msgId}` },
+            { text: '❤️ لایک', callback_data: `like_${msgId}` },
+            { text: '🔁 فوروارد', callback_data: `forward_${msgId}` }
+        ];
+
         await bot.telegram.sendMessage(
             targetChatId,
             `📩 **پیام جدید از ${fromGroup.chatTitle}**\n\n` +
             `👤 **${ctx.from.first_name}**\n` +
-            `📝 ${text}`,
+            `📝 ${text}\n\n` +
+            `🕐 ${new Date().toLocaleTimeString('fa-IR')}`,
             {
                 parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [
-                        Markup.button.callback('👁️ دیدم', `seen_${msgId}`),
-                        Markup.button.callback('✍️ پاسخ', `reply_${msgId}`)
-                    ]
-                ])
+                ...createGlassKeyboard(messageButtons)
             }
         );
 
@@ -270,15 +537,11 @@ bot.on('text', async (ctx) => {
 bot.action(/seen_(.+)/, async (ctx) => {
     const msgId = ctx.match[1];
     const message = data.messages.find(m => m.id === msgId);
-    
-    if (!message) {
-        return ctx.reply('❌ پیام یافت نشد!');
-    }
+    if (!message) return ctx.reply('❌ پیام یافت نشد!');
 
     message.seen = true;
     saveData(data);
 
-    // اطلاع به فرستنده
     try {
         await bot.telegram.sendMessage(
             message.fromUserId,
@@ -288,55 +551,87 @@ bot.action(/seen_(.+)/, async (ctx) => {
     } catch (e) {}
 
     await ctx.reply('✅ تایید دید ارسال شد!');
+    await ctx.answerCbQuery('✅ تایید شد');
 });
 
 // ===================== دکمه "پاسخ" =====================
 bot.action(/reply_(.+)/, async (ctx) => {
     const msgId = ctx.match[1];
     const message = data.messages.find(m => m.id === msgId);
-    
-    if (!message) {
-        return ctx.reply('❌ پیام یافت نشد!');
-    }
+    if (!message) return ctx.reply('❌ پیام یافت نشد!');
 
     userStates[ctx.from.id] = {
         step: 'waiting_reply',
         targetUserId: message.fromUserId,
-        originalMessage: message.text,
         msgId: msgId
     };
 
     await ctx.reply(
-        `✍️ **پاسخ به پیام:**\n\n"${message.text}"\n\n📝 پیام خود را بنویسید:`,
+        `✍️ **پاسخ به پیام:**\n\n` +
+        `"${message.text}"\n\n` +
+        `📝 پیام خود را بنویسید:`,
         { parse_mode: 'Markdown' }
     );
+    await ctx.answerCbQuery('✍️ پاسخ را بنویسید');
 });
 
-// ===================== دریافت پاسخ =====================
+// ===================== دکمه "لایک" =====================
+bot.action(/like_(.+)/, async (ctx) => {
+    const msgId = ctx.match[1];
+    const message = data.messages.find(m => m.id === msgId);
+    if (!message) return ctx.reply('❌ پیام یافت نشد!');
+
+    try {
+        await bot.telegram.sendMessage(
+            message.fromUserId,
+            `❤️ **${ctx.from.first_name}** به پیام شما لایک داد:\n\n"${message.text}"`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) {}
+
+    await ctx.reply('❤️ لایک شما ارسال شد!');
+    await ctx.answerCbQuery('❤️ لایک شد');
+});
+
+// ===================== دکمه "فوروارد" =====================
+bot.action(/forward_(.+)/, async (ctx) => {
+    const msgId = ctx.match[1];
+    const message = data.messages.find(m => m.id === msgId);
+    if (!message) return ctx.reply('❌ پیام یافت نشد!');
+
+    userStates[ctx.from.id] = {
+        step: 'waiting_forward',
+        msgId: msgId,
+        targetUserId: message.fromUserId
+    };
+
+    await ctx.reply(
+        `🔁 **فوروارد پیام:**\n\n` +
+        `"${message.text}"\n\n` +
+        `📝 پیام خود را برای فوروارد بنویسید:`,
+        { parse_mode: 'Markdown' }
+    );
+    await ctx.answerCbQuery('🔁 پیام را بنویسید');
+});
+
+// ===================== دریافت فوروارد =====================
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text;
 
-    if (userStates[userId]?.step === 'waiting_reply') {
+    if (userStates[userId]?.step === 'waiting_forward') {
         const state = userStates[userId];
-
         try {
             await bot.telegram.sendMessage(
                 state.targetUserId,
-                `✍️ **پاسخ از ${ctx.from.first_name}:**\n\n📝 ${text}`,
+                `🔁 **فوروارد از ${ctx.from.first_name}:**\n\n📝 ${text}`,
                 { parse_mode: 'Markdown' }
             );
-
-            // بروزرسانی پیام در تاریخچه
-            const msg = data.messages.find(m => m.id === state.msgId);
-            if (msg) msg.replied = true;
-            saveData(data);
-
-            await ctx.reply('✅ پاسخ شما ارسال شد!');
+            await ctx.reply('✅ فوروارد ارسال شد!');
             delete userStates[userId];
         } catch (error) {
             console.error('❌ خطا:', error);
-            ctx.reply('❌ خطا در ارسال پاسخ!');
+            ctx.reply('❌ خطا در فوروارد!');
         }
     }
 });
@@ -354,7 +649,8 @@ app.listen(PORT, () => {
 bot.launch()
     .then(() => {
         console.log('✅ Bridge Bot started!');
-        console.log('📝 برای اتصال گروه‌ها بنویسید: "اتصال به [اسم گروه]"');
+        console.log('📝 برای اتصال: "اتصال به [اسم گروه]"');
+        console.log('👤 برای پیام‌رسان: ریپلای + "پیام رسان"');
     })
     .catch(err => console.error('❌ Failed:', err));
 
