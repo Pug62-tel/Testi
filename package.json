@@ -1,7 +1,7 @@
 {
   "name": "telegram-self-bot",
   "version": "1.0.0",
-  "description": "Self-bot without API_ID",
+  "description": "Telegram self-bot without API",
   "main": "start.js",
   "scripts": {
     "start": "node start.js"
