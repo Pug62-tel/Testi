@@ -1,7 +1,7 @@
 {
   "name": "telegram-bridge-bot",
   "version": "1.0.0",
-  "description": "Bridge bot between two Telegram groups",
+  "description": "Bridge bot with messenger system",
   "main": "start.js",
   "scripts": {
     "start": "node start.js"
