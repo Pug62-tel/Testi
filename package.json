@@ -1,7 +1,7 @@
 {
   "name": "telegram-meow-bot",
   "version": "1.0.0",
-  "description": "Telegram bot that sends meow messages randomly",
+  "description": "Simple meow bot",
   "main": "start.js",
   "scripts": {
     "start": "node start.js"
