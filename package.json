@@ -1,13 +1,14 @@
 {
-  "name": "telegram-meow-bot",
+  "name": "telegram-self-bot",
   "version": "1.0.0",
-  "description": "Simple meow bot",
+  "description": "Self-bot without API_ID",
   "main": "start.js",
   "scripts": {
     "start": "node start.js"
   },
   "dependencies": {
-    "telegraf": "^4.15.3",
-    "express": "^4.18.2"
+    "mtproto-core": "^2.4.1",
+    "express": "^4.18.2",
+    "input": "^1.0.1"
   }
 }
