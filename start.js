@@ -56,6 +56,20 @@ function isAdmin(userId) {
     return String(userId) === String(ADMIN_ID);
 }
 
+// ✅ تابع بررسی مجوز ارسال پیام
+function canSendMessage(userId) {
+    // اگه مدیر باشه حتماً میتونه
+    if (isAdmin(userId)) return true;
+    
+    // اگه پیام‌رسان تعیین شده و کاربر همون باشه
+    if (data.messenger && String(data.messenger.userId) === String(userId)) {
+        return true;
+    }
+    
+    // در غیر این صورت مجاز نیست
+    return false;
+}
+
 // ===================== دکمه‌های شیشه‌ای =====================
 function createGlassKeyboard(buttons) {
     const keyboard = [];
@@ -364,7 +378,6 @@ bot.on('text', async (ctx) => {
         if (userStates[userId].step === 'waiting_reply') {
             const state = userStates[userId];
             try {
-                // ارسال پاسخ به **گروه مبدا** (نه پیوی)
                 await bot.telegram.sendMessage(
                     state.originalChatId,
                     `✍️ **پاسخ از ${ctx.from.first_name}:**\n\n📝 ${text}`,
@@ -410,7 +423,12 @@ bot.on('text', async (ctx) => {
     }
 
     // ========== تشخیص "پیام رسان" در ریپلای (فقط مدیر) ==========
-    if (replyTo && text.trim() === 'پیام رسان' && isAdmin(userId)) {
+    if (replyTo && text.trim() === 'پیام رسان') {
+        // ❌ فقط مدیر میتونه پیام‌رسان تعیین کنه
+        if (!isAdmin(userId)) {
+            return ctx.reply('❌ فقط مدیر میتواند پیام‌رسان تعیین کند!');
+        }
+
         const targetUserId = replyTo.from.id;
         const targetName = replyTo.from.first_name || 'کاربر';
         const group = data.groups[chatId];
@@ -429,7 +447,6 @@ bot.on('text', async (ctx) => {
         };
         saveData(data);
 
-        // اطلاع در خود گروه
         await ctx.reply(
             `✅ **${targetName}** به عنوان پیام‌رسان تعیین شد!\n\n` +
             `🔒 فقط ایشان میتوانند در گروه "${group.chatTitle}" پیام بفرستند.\n` +
@@ -437,7 +454,6 @@ bot.on('text', async (ctx) => {
             { parse_mode: 'Markdown' }
         );
 
-        // اطلاع به فرد انتخاب شده (در پیوی)
         try {
             await bot.telegram.sendMessage(
                 targetUserId,
@@ -449,7 +465,11 @@ bot.on('text', async (ctx) => {
     }
 
     // ========== تشخیص "لغو پیام رسان" در ریپلای (فقط مدیر) ==========
-    if (replyTo && text.trim() === 'لغو پیام رسان' && isAdmin(userId)) {
+    if (replyTo && text.trim() === 'لغو پیام رسان') {
+        if (!isAdmin(userId)) {
+            return ctx.reply('❌ فقط مدیر میتواند پیام‌رسان را لغو کند!');
+        }
+
         if (!data.messenger) {
             return ctx.reply('❌ هیچ پیام‌رسانی تعیین نشده!');
         }
@@ -461,7 +481,11 @@ bot.on('text', async (ctx) => {
     }
 
     // ========== اتصال با متن (فقط مدیر) ==========
-    if (text.startsWith('اتصال به ') && isAdmin(userId)) {
+    if (text.startsWith('اتصال به ')) {
+        if (!isAdmin(userId)) {
+            return ctx.reply('❌ فقط مدیر میتواند گروه‌ها را به هم وصل کند!');
+        }
+
         const targetTitle = text.replace('اتصال به ', '').trim();
         let targetGroup = null;
         for (const key in data.groups) {
@@ -491,7 +515,11 @@ bot.on('text', async (ctx) => {
     }
 
     // ========== قطع اتصال (فقط مدیر) ==========
-    if (text === 'قطع اتصال' && isAdmin(userId)) {
+    if (text === 'قطع اتصال') {
+        if (!isAdmin(userId)) {
+            return ctx.reply('❌ فقط مدیر میتواند اتصال را قطع کند!');
+        }
+
         if (!data.bridge) return ctx.reply('❌ هیچ اتصالی وجود ندارد!');
         const bridge = data.bridge;
         const group1 = data.groups[bridge.group1];
@@ -539,14 +567,13 @@ bot.on('text', async (ctx) => {
     const fromGroup = data.groups[chatId];
     const toGroup = data.groups[targetChatId];
 
-    // ========== بررسی مجوز ارسال ==========
-    const messenger = data.messenger;
-    
-    // اگر پیام‌رسان تعیین شده و کاربر پیام‌رسان نیست و مدیر هم نیست
-    if (messenger && String(messenger.userId) !== String(userId) && !isAdmin(userId)) {
+    // ========== ✅ بررسی مجوز ارسال (اصلاح شده) ==========
+    // فقط مدیر یا پیام‌رسان میتونن پیام بدن
+    if (!canSendMessage(userId)) {
+        const messengerName = data.messenger?.name || 'مدیر';
         return ctx.reply(
             `❌ **شما مجاز به ارسال پیام نیستید!**\n\n` +
-            `🔒 فقط **${messenger.name}** میتواند پیام بفرستد.`,
+            `🔒 فقط **${messengerName}** یا مدیر میتواند پیام بفرستد.`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -568,7 +595,6 @@ bot.on('text', async (ctx) => {
     saveData(data);
 
     try {
-        // دکمه‌های شیشه‌ای برای پیام
         const messageButtons = [
             { text: '👁️ دیدم', callback_data: `seen_${msgId}` },
             { text: '✍️ پاسخ', callback_data: `reply_${msgId}` },
@@ -576,7 +602,6 @@ bot.on('text', async (ctx) => {
             { text: '🔁 فوروارد', callback_data: `forward_${msgId}` }
         ];
 
-        // ارسال به گروه مقصد با دکمه‌ها
         await bot.telegram.sendMessage(
             targetChatId,
             `📩 **پیام جدید از ${fromGroup.chatTitle}**\n\n` +
@@ -605,7 +630,6 @@ bot.action(/seen_(.+)/, async (ctx) => {
     message.seen = true;
     saveData(data);
 
-    // ارسال تایید دید به **گروه مبدا**
     try {
         await bot.telegram.sendMessage(
             message.fromUserId,
@@ -613,7 +637,6 @@ bot.action(/seen_(.+)/, async (ctx) => {
             { parse_mode: 'Markdown' }
         );
     } catch (e) {
-        // اگر نتونست به پیوی بفرسته، توی گروه بفرسته
         try {
             const bridge = data.bridge;
             if (bridge) {
@@ -637,10 +660,7 @@ bot.action(/reply_(.+)/, async (ctx) => {
     const message = data.messages.find(m => m.id === msgId);
     if (!message) return ctx.reply('❌ پیام یافت نشد!');
 
-    // پیدا کردن گروه مبدا برای ارسال پاسخ
     let originalChatId = message.fromUserId;
-    
-    // اگر کاربر در گروه مقصد است، پیام رو به گروه مبدا بفرست
     const chatId = String(ctx.chat.id);
     const bridge = data.bridge;
     if (bridge) {
@@ -673,7 +693,6 @@ bot.action(/like_(.+)/, async (ctx) => {
     const message = data.messages.find(m => m.id === msgId);
     if (!message) return ctx.reply('❌ پیام یافت نشد!');
 
-    // ارسال لایک به گروه مبدا
     try {
         const bridge = data.bridge;
         if (bridge) {
@@ -696,7 +715,6 @@ bot.action(/forward_(.+)/, async (ctx) => {
     const message = data.messages.find(m => m.id === msgId);
     if (!message) return ctx.reply('❌ پیام یافت نشد!');
 
-    // پیدا کردن گروه مبدا
     let originalChatId = message.fromUserId;
     const chatId = String(ctx.chat.id);
     const bridge = data.bridge;
